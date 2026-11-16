@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -66,20 +67,24 @@ public class OrientacionCorporalService {
     private final String baseUrl;
     private final String model;
     private final String systemPrompt;
+    private final String reasoningEffort;
 
     public OrientacionCorporalService(MedicoRepository medicos,
                                       @Value("${medicerca.ai.api-key:}") String apiKey,
                                       @Value("${medicerca.ai.base-url:https://generativelanguage.googleapis.com/v1beta/openai/}") String baseUrl,
                                       @Value("${medicerca.ai.model:gemini-3.8-flash}") String model,
-                                      @Value("${medicerca.ai.system-prompt:}") String systemPrompt) {
+                                      @Value("${medicerca.ai.system-prompt:}") String systemPrompt,
+                                      @Value("${medicerca.ai.reasoning-effort:low}") String reasoningEffort,
+                                      @Value("${medicerca.ai.timeout-seconds:30}") int timeoutSeconds) {
         this.medicos = medicos;
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.baseUrl = baseUrl;
         this.model = model;
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
+        this.reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
-        factory.setReadTimeout(Duration.ofSeconds(20));
+        factory.setReadTimeout(Duration.ofSeconds(Math.max(5, timeoutSeconds)));
         this.http = RestClient.builder().requestFactory(factory).build();
     }
 
@@ -200,14 +205,18 @@ public class OrientacionCorporalService {
     }
 
     private JsonNode callModel(String instructions, String message) throws Exception {
-        Map<String, Object> body = Map.of("model", model,
-                "messages", List.of(Map.of("role", "system", "content", instructions),
-                        Map.of("role", "user", "content", message)),
-                "response_format", Map.of("type", "json_object"), "temperature", 0.2);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("messages", List.of(Map.of("role", "system", "content", instructions),
+                Map.of("role", "user", "content", message)));
+        body.put("response_format", Map.of("type", "json_object"));
+        body.put("temperature", 0.2);
+        // Los modelos que "piensan" antes de responder (ej. Gemini 3) tardan demasiado con su nivel de
+        // razonamiento por defecto y la llamada vencía por tiempo; aquí basta un razonamiento bajo.
+        if (!reasoningEffort.isEmpty()) body.put("reasoning_effort", reasoningEffort);
         String endpoint = baseUrl.replaceAll("/+$", "") + "/chat/completions";
-        // Se lee el cuerpo crudo con exchange() en vez de retrieve().body(String.class): algunos
-        // proveedores (ej. Gemini) devuelven Content-Type: application/octet-stream en vez de
-        // application/json, y el conversor de Spring para String rechaza ese tipo de contenido.
+        // Se lee el cuerpo crudo con exchange() en vez de retrieve().body(String.class): así un error
+        // (tiempo de espera, 4xx/5xx) llega al log con su causa real y con el cuerpo que devolvió la IA.
         String raw = http.post().uri(endpoint)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer " + apiKey)
