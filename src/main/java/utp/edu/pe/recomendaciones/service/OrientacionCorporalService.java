@@ -69,8 +69,8 @@ public class OrientacionCorporalService {
 
     public OrientacionCorporalService(MedicoRepository medicos,
                                       @Value("${medicerca.ai.api-key:}") String apiKey,
-                                      @Value("${medicerca.ai.base-url:https://api.groq.com/openai/v1}") String baseUrl,
-                                      @Value("${medicerca.ai.model:openai/gpt-oss-120b}") String model,
+                                      @Value("${medicerca.ai.base-url:https://generativelanguage.googleapis.com/v1beta/openai/}") String baseUrl,
+                                      @Value("${medicerca.ai.model:gemini-2.0-flash}") String model,
                                       @Value("${medicerca.ai.system-prompt:}") String systemPrompt) {
         this.medicos = medicos;
         this.apiKey = apiKey == null ? "" : apiKey.trim();
