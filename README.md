@@ -185,7 +185,19 @@ de entorno antes de arrancar (o en `config/mail.local.properties`, que está en
 | `DB_PASSWORD` | Contraseña de MySQL | vacío |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Cuenta de administrador inicial | vacío (pedir al equipo) |
 | `MAIL_USERNAME` / `MAIL_PASSWORD` | Envío de correos (notificaciones, códigos) | vacío (deshabilita el correo) |
-| `GROQ_API_KEY` | Asistente de orientación por IA (síntoma → especialidad) | vacío (deshabilita el asistente) |
+| `AI_API_KEY` | Clave de Gemini API, obtenida en Google AI Studio | vacío (solo reglas internas) |
+| `AI_BASE_URL` | URL de la API compatible con OpenAI | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| `AI_MODEL` | Modelo del asistente | `gemini-3.8-flash` |
+| `AI_REASONING_EFFORT` | Nivel de razonamiento; vacío para proveedores que no lo soporten | `low` |
+| `AI_TIMEOUT_SECONDS` | Tiempo máximo de lectura de la respuesta de IA, en segundos | `30` |
+
+`GROQ_API_KEY` y `GEMINI_API_KEY` no son leídas por esta aplicación: configura
+`AI_API_KEY` en el entorno que ejecuta el servidor. Las variables de entorno
+prevalecen sobre los valores por defecto, por lo que un `AI_MODEL` antiguo en
+Render sigue usándose aunque se cambie el modelo por defecto en el código.
+El asistente solo recomienda especialidades con médicos activos. Si no hay una
+adecuada, debe explicarlo sin sugerir otra sin relación. Ver
+[diagnóstico del asistente](DIAGNOSTICO_ASISTENTE.md) para los casos reproducidos.
 
 ```bash
 # arrancar la app (Hibernate crea/actualiza las tablas automáticamente)

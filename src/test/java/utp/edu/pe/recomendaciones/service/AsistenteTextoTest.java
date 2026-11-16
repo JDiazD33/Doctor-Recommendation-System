@@ -39,6 +39,7 @@ class AsistenteTextoTest {
     @Test
     void textoSinSintomasNoSugiereNada() {
         assertThat(especialidadPara("hola buenas")).isNull();
+        assertThat(especialidadPara("¿Cómo estás?")).isNull();
         assertThat(especialidadPara("mañana a las 4")).isNull();
         // "marzo" no debe confundirse con "mareo".
         assertThat(especialidadPara("el 5 de marzo")).isNull();
@@ -88,5 +89,6 @@ class AsistenteTextoTest {
     void palabrasConErroresDeOrtografiaCoinciden() {
         assertThat(AsistenteTexto.parecida(AsistenteTexto.fonetica("cavesa"), AsistenteTexto.fonetica("cabeza"))).isTrue();
         assertThat(AsistenteTexto.parecida(AsistenteTexto.fonetica("ojo"), AsistenteTexto.fonetica("oso"))).isFalse();
+        assertThat(AsistenteTexto.parecida(AsistenteTexto.fonetica("como"), AsistenteTexto.fonetica("codo"))).isFalse();
     }
 }
