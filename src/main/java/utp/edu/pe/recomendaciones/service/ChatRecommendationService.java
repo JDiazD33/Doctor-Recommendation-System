@@ -1,6 +1,8 @@
 package utp.edu.pe.recomendaciones.service;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -535,12 +537,20 @@ public class ChatRecommendationService {
                         Map.of("role", "user", "content", message)),
                 "response_format", Map.of("type", "json_object"), "temperature", 0.2);
         String endpoint = baseUrl.replaceAll("/+$", "") + "/chat/completions";
-        // Se envía y se lee como texto plano para no depender de los convertidores JSON de Spring.
+        // Se lee el cuerpo crudo con exchange() en vez de retrieve().body(String.class): algunos
+        // proveedores (ej. Gemini) devuelven Content-Type: application/octet-stream en vez de
+        // application/json, y el conversor de Spring para String rechaza ese tipo de contenido.
         String raw = http.post().uri(endpoint)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer " + apiKey)
                 .body(mapper.writeValueAsString(body))
-                .retrieve().body(String.class);
+                .exchange((req, res) -> {
+                    String texto = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                    if (res.getStatusCode().isError()) {
+                        throw new IOException("IA respondió " + res.getStatusCode().value() + ": " + texto);
+                    }
+                    return texto;
+                });
         if (!StringUtils.hasText(raw)) return null;
         String content = mapper.readTree(raw).path("choices").path(0).path("message").path("content").asText("");
         content = content.replaceAll("(?s)^\\s*```(?:json)?\\s*|\\s*```\\s*$", "").trim();
