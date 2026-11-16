@@ -335,6 +335,6 @@ class CitaPacienteServiceTest extends BaseMedicosTest {
         });
         assertThat(v.pendientes().get(0).hora()).startsWith("09:00");       // la de mañana, antes que la de pasado mañana
         assertThat(v.pendientes().get(1).modalidad()).isEqualTo("Teleconsulta");
-        assertThat(v.historial()).extracting(AccountView.CitaItem::estado).containsExactly("Completada", "Cancelada");
+        assertThat(v.historial()).extracting(AccountView.CitaItem::estado).containsExactly("Atendida", "Cancelada");
     }
 }

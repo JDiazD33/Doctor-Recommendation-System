@@ -95,12 +95,6 @@
       <scope>runtime</scope>
     </dependency>
 
-    <!-- Envio de correos (JavaMail via spring.mail.*): notificaciones y codigos de seguridad -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-mail</artifactId>
-    </dependency>
-
     <!-- Modulo Documentacion: Swagger / OpenAPI (linea 3.x para Spring Boot 4) -->
     <dependency>
       <groupId>org.springdoc</groupId>
