@@ -1,36 +1,43 @@
 package utp.edu.pe.recomendaciones.service;
 
-import java.io.UnsupportedEncodingException;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import utp.edu.pe.recomendaciones.exception.NegocioException;
 
 /**
- * Infraestructura de envío de correo (SMTP). La usan NotificacionMedicoService (aprobación/rechazo de médicos) y
- * CredencialesMedicoService (códigos de seguridad). La configuración está en application.properties (spring.mail.*
- * y medicerca.mail.*) y las credenciales vienen de variables de entorno o de config/mail.local.properties.
+ * Infraestructura de envío de correo via la API HTTP de Resend (https://resend.com). La usan
+ * NotificacionMedicoService (aprobación/rechazo de médicos), CredencialesMedicoService y
+ * RecuperacionPasswordService (códigos de seguridad).
  *
- * Reglas: la aplicación arranca aunque no haya credenciales (disponible() == false y enviar* falla con un
- * mensaje claro); nunca se registra la contraseña; el destinatario y el asunto se limpian de saltos de línea.
+ * Por qué HTTP y no SMTP: Render (y varios PaaS gratuitos) bloquean las conexiones salientes a los
+ * puertos de SMTP (25/465/587); un correo por SMTP directo nunca llega ahí aunque las credenciales
+ * estén bien. La API de Resend va por HTTPS (puerto 443), que nunca se bloquea.
+ *
+ * Reglas: la aplicación arranca aunque no haya clave de API (disponible() == false y enviar* falla
+ * con un mensaje claro); nunca se registra la clave; el destinatario y el asunto se limpian de
+ * saltos de línea.
  */
 @Service
 public class CorreoService {
 
     private static final Logger log = LoggerFactory.getLogger(CorreoService.class);
+    private static final String BASE_URL = "https://api.resend.com";
 
-    /** Resultado de probar la conexión SMTP (sin enviar ningún correo). */
+    /** Resultado de probar la clave de API de Resend (sin enviar ningún correo). */
     public record Verificacion(Estado estado, String detalle) {
         public enum Estado { NO_CONFIGURADO, CONEXION_OK, ERROR }
 
@@ -39,54 +46,58 @@ public class CorreoService {
         }
     }
 
-    private final ObjectProvider<JavaMailSender> remitente;
+    private final RestClient http;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final String apiKey;
     private final String from;
     private final String fromName;
 
-    public CorreoService(ObjectProvider<JavaMailSender> remitente,
+    public CorreoService(@Value("${medicerca.resend.api-key:}") String apiKey,
                          @Value("${medicerca.mail.from:}") String from,
                          @Value("${medicerca.mail.from-name:MediCerca}") String fromName) {
-        this.remitente = remitente;
-        this.from = from;
+        this.apiKey = apiKey == null ? "" : apiKey.trim();
+        this.from = from == null ? "" : from.trim();
         this.fromName = fromName;
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(5));
+        factory.setReadTimeout(Duration.ofSeconds(10));
+        this.http = RestClient.builder().baseUrl(BASE_URL).requestFactory(factory).build();
     }
 
-    /** true si hay servidor, usuario y contraseña SMTP: es decir, si enviar() puede intentarse. */
+    /** true si hay clave de API y remitente: es decir, si enviar() puede intentarse. */
     public boolean disponible() {
         return motivoNoDisponible() == null;
     }
 
-    /** Resumen sin secretos para el log: servidor, puerto y usuario enmascarado. */
+    /** Resumen sin secretos para el log: remitente configurado. */
     public String descripcion() {
-        if (!(remitente.getIfAvailable() instanceof JavaMailSenderImpl s)) return "sin servidor SMTP";
-        return s.getHost() + ":" + s.getPort() + ", usuario " + enmascarar(s.getUsername());
+        return "Resend API, remitente " + (vacio(from) ? "(sin definir)" : from);
     }
 
     /** Qué falta para poder enviar, o null si todo está listo. */
     public String motivoNoDisponible() {
-        if (!(remitente.getIfAvailable() instanceof JavaMailSenderImpl s) || vacio(s.getHost())) {
-            return "No hay servidor SMTP configurado (spring.mail.host).";
-        }
-        if (vacio(s.getUsername())) return "Falta el usuario de correo (variable MAIL_USERNAME).";
-        if (vacio(s.getPassword())) return "Falta la contraseña de aplicación (variable MAIL_PASSWORD).";
-        if (vacio(remitenteDireccion(s))) return "Falta la dirección del remitente (MAIL_FROM).";
+        if (vacio(apiKey)) return "Falta la clave de la API de Resend (variable RESEND_API_KEY).";
+        if (vacio(from)) return "Falta la dirección del remitente (variable MAIL_FROM).";
         return null;
     }
 
     /**
-     * Abre la conexión SMTP y se autentica, pero NO envía ningún correo. Sirve para comprobar que el
-     * host, el puerto y la contraseña de aplicación son correctos.
+     * Pide la lista de dominios de la cuenta de Resend (no envía ningún correo). Sirve solo para
+     * comprobar que la clave de API es válida.
      */
     public Verificacion verificarConexion() {
         String falta = motivoNoDisponible();
         if (falta != null) return new Verificacion(Verificacion.Estado.NO_CONFIGURADO, falta);
-        JavaMailSenderImpl s = (JavaMailSenderImpl) remitente.getObject();
         try {
-            s.testConnection();
-            return new Verificacion(Verificacion.Estado.CONEXION_OK, "Conexión y autenticación SMTP correctas (" + descripcion() + ").");
-        } catch (MessagingException e) {
-            // Se registra el tipo y el mensaje del servidor; nunca la contraseña.
-            return new Verificacion(Verificacion.Estado.ERROR, "No se pudo conectar o autenticar: " + e.getMessage());
+            http.get().uri("/domains")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .retrieve().body(String.class);
+            return new Verificacion(Verificacion.Estado.CONEXION_OK, "Clave de Resend válida (" + descripcion() + ").");
+        } catch (RestClientResponseException e) {
+            return new Verificacion(Verificacion.Estado.ERROR,
+                    "Resend rechazó la clave de API (HTTP " + e.getStatusCode().value() + "): " + resumen(e));
+        } catch (Exception e) {
+            return new Verificacion(Verificacion.Estado.ERROR, "No se pudo contactar a Resend: " + e.getMessage());
         }
     }
 
@@ -106,23 +117,33 @@ public class CorreoService {
             log.warn("Correo no enviado: {}", falta);
             throw new NegocioException("El envío de correos no está disponible en este momento.");
         }
-        JavaMailSender s = remitente.getObject();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("from", fromName + " <" + from + ">");
+        body.put("to", List.of(sinSaltos(para)));
+        body.put("subject", sinSaltos(asunto));
+        body.put(html ? "html" : "text", cuerpo == null ? "" : cuerpo);
         try {
-            MimeMessage mensaje = s.createMimeMessage();
-            MimeMessageHelper h = new MimeMessageHelper(mensaje, false, StandardCharsets.UTF_8.name());
-            h.setFrom(remitenteDireccion((JavaMailSenderImpl) s), fromName);
-            h.setTo(sinSaltos(para));
-            h.setSubject(sinSaltos(asunto));
-            h.setText(cuerpo == null ? "" : cuerpo, html);
-            s.send(mensaje);
-        } catch (MessagingException | UnsupportedEncodingException | MailException e) {
+            http.post().uri("/emails")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("Authorization", "Bearer " + apiKey)
+                    .body(mapper.writeValueAsString(body))
+                    .retrieve().body(String.class);
+        } catch (RestClientResponseException e) {
+            log.error("No se pudo enviar el correo a {} (HTTP {}): {}", enmascarar(para), e.getStatusCode().value(), resumen(e));
+            throw new NegocioException("No se pudo enviar el correo. Inténtalo de nuevo en unos minutos.");
+        } catch (Exception e) {
             log.error("No se pudo enviar el correo a {}: {}", enmascarar(para), e.getMessage());
             throw new NegocioException("No se pudo enviar el correo. Inténtalo de nuevo en unos minutos.");
         }
     }
 
-    private String remitenteDireccion(JavaMailSenderImpl s) {
-        return vacio(from) ? s.getUsername() : from.trim();
+    /** El cuerpo de la respuesta de error de Resend (JSON con "message"), o el texto crudo si no se puede leer. */
+    private String resumen(RestClientResponseException e) {
+        try {
+            return mapper.readTree(e.getResponseBodyAsString()).path("message").asText(e.getResponseBodyAsString());
+        } catch (Exception ignored) {
+            return e.getResponseBodyAsString();
+        }
     }
 
     private static String sinSaltos(String s) {
